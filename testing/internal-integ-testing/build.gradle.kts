@@ -114,7 +114,6 @@ dependencies {
     implementation(libs.commonsLang)
     implementation(libs.commonsLang3)
     implementation(libs.commonsIo)
-    implementation(libs.groovyAnt)
     implementation(libs.groovyJson)
     implementation(libs.httpcore)
     implementation(libs.inject)
