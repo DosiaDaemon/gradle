@@ -17,6 +17,7 @@
 package org.gradle.kotlin.dsl.integration
 
 import org.gradle.kotlin.dsl.fixtures.AbstractKotlinIntegrationTest
+import org.junit.Ignore
 import org.junit.Test
 
 
@@ -184,6 +185,63 @@ class KotlinDslNullnessIntegrationTest : AbstractKotlinIntegrationTest() {
 
         val result = build("classes")
 
+        result.assertTaskExecuted(":compileKotlin")
+    }
+
+    @Test
+    @Ignore("Currently fails with Kotlin 2.0.21 to 2.1.20 since the move to JSpecify")
+    fun `Property#set accepts null in script`() {
+        withBuildScript(
+            """
+            interface Some {
+                val some: Property<String>
+            }
+            val instance = objects.newInstance<Some>()
+            instance.some.set(null)
+            """.trimIndent()
+        )
+        build("help")
+    }
+
+    @Test
+    @Ignore("Currently fails with Kotlin 2.0.21 to 2.1.20 since the move to JSpecify")
+    fun `Property#set accepts null in precompiled script`() {
+        withKotlinDslPlugin()
+        withFile(
+            "src/main/kotlin/my-plugin.gradle.kts",
+            """
+            interface Some {
+                val some: Property<String>
+            }
+            val instance = objects.newInstance<Some>()
+            instance.some.set(null)
+            """.trimIndent()
+        )
+        val result = build("classes")
+        result.assertTaskExecuted(":compileKotlin")
+    }
+
+    @Test
+    @Ignore("Currently fails with Kotlin 2.0.21 to 2.1.20 since the move to JSpecify")
+    fun `Property#set accepts null in kt file in kotlin-dsl project`() {
+        withKotlinDslPlugin()
+        withFile(
+            "src/main/kotlin/MyPlugin.kt",
+            """
+            import org.gradle.api.*
+            import org.gradle.api.provider.*
+            interface Some {
+                val some: Property<String>
+            }
+            class MyPlugin : Plugin<Project> {
+                override fun apply(project: Project) {
+                    val instance = project.objects.newInstance<Some>()
+                    instance.some.set(null)
+                }
+            }
+            """.trimIndent()
+        )
+        val result = build("classes")
         result.assertTaskExecuted(":compileKotlin")
     }
 }
