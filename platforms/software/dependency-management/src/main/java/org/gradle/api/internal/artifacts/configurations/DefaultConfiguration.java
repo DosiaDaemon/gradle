@@ -1250,74 +1250,39 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
         }
 
         preventIllegalParentMutation(type);
-        boolean emittedDeprecation = maybePreventMutation(type, type + " of parent");
-
-        // Notify children of this mutation, but don't emit a deprecation if we already emitted one
-        // at this level, otherwise we spam for no reason. We can remove this once the deprecation
-        // turns into an error, since the error will short-circuit the child notifications.
-        if (emittedDeprecation) {
-            DeprecationLogger.whileDisabled(() -> notifyChildren(type));
-        } else {
-            notifyChildren(type);
-        }
+        preventMutationAfterObservation(type, type.toString());
+        notifyChildren(type);
     }
 
     @Override
     public void validateMutation(MutationType type) {
         preventIllegalMutation(type);
-        boolean emittedDeprecation = maybePreventMutation(type, type.toString());
-
-        // Notify children of this mutation, but don't emit a deprecation if we already emitted one
-        // at this level, otherwise we spam for no reason. We can remove this once the deprecation
-        // turns into an error, since the error will short-circuit the child notifications.
-        if (emittedDeprecation) {
-            DeprecationLogger.whileDisabled(() -> notifyChildren(type));
-        } else {
-            notifyChildren(type);
-        }
+        preventMutationAfterObservation(type, type.toString());
+        notifyChildren(type);
     }
 
     /**
-     * Emit a warning (and eventually throw an exception) if a mutation of type {@code type} occurs
+     * Throw an exception if a mutation of type {@code type} occurs
      * during a forbidden state.
-     *
-     * @return true if a deprecation was emitted
      */
-    private boolean maybePreventMutation(MutationType type, String typeDescription) {
+    private void preventMutationAfterObservation(MutationType type, String typeDescription) {
         // If an external party has seen the public state (variant metadata) of our configuration,
         // we forbid any mutation that mutates the public state. The resolution strategy does
         // not mutate the public state of the configuration, so we allow it.
         if (observationReason != null && type != MutationType.STRATEGY) {
             String verb = type.isPlural() ? "were" : "was";
-            DeprecationLogger.deprecateBehaviour("Mutating a configuration after it has been resolved, consumed as a variant, or used for generating published metadata.")
-                .withContext(String.format("The %s of %s %s mutated after %s.", typeDescription, this.getDisplayName(), verb, observationReason.get()))
-                .withAdvice("After a configuration has been observed, it should not be modified.")
-                .willBecomeAnErrorInGradle9()
-                .withUpgradeGuideSection(8, "mutate_configuration_after_locking")
-                .nagUser();
-            return true;
+            String msg = String.format("Cannot mutate a configuration after it has been resolved, consumed as a variant, or used for generating published metadata.  The %s of %s %s mutated after %s.", typeDescription, this.getDisplayName(), verb, observationReason.get());
+            throw new GradleException(msg);
         }
-        return false;
     }
 
     private void preventIllegalParentMutation(MutationType type) {
-        // TODO: We can remove this check once we turn `maybePreventMutation` into an error
-        if (type == MutationType.DEPENDENCY_ATTRIBUTES || type == MutationType.DEPENDENCY_CONSTRAINT_ATTRIBUTES) {
-            return;
-        }
-
         if (isFullyResolved(currentResolveState.get())) {
             throw new InvalidUserDataException(String.format("Cannot change %s of parent of %s after it has been resolved", type, getDisplayName()));
         }
     }
 
     private void preventIllegalMutation(MutationType type) {
-        // TODO: We can remove this check once we turn `maybePreventMutation` into an error
-        if (type == MutationType.DEPENDENCY_ATTRIBUTES || type == MutationType.DEPENDENCY_CONSTRAINT_ATTRIBUTES) {
-            assertIsDeclarable("Changing " + type);
-            return;
-        }
-
         if (isFullyResolved(currentResolveState.get())) {
             // The public result for the configuration has been calculated.
             // It is an error to change anything that would change the dependencies or artifacts
@@ -1514,47 +1479,36 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
      * The eventual goal is that all configuration usage be specified upon creation and immutable
      * thereafter.
      */
+    @SuppressWarnings("deprecation")
     private void maybeWarnOnChangingUsage(String methodName, boolean current, boolean newValue) {
-        if (hasAllUsages()) {
+        if (roleAtCreation == ConfigurationRoles.ALL) {
             // We currently allow configurations with all usages -- those that are created with
             // `create` and `register` -- to have mutable roles. This is likely to change in the future
             // when we deprecate any configuration with mutable roles.
             return;
         }
 
-        // Error will be thrown later. Don't emit a duplicate warning.
-        if (!usageCanBeMutated && (current != newValue)) {
-            return;
-        }
-
-        // KGP continues to set the already-set value for a given usage even though it is already set
         boolean redundantChange = current == newValue;
-
-        // KGP disables `consumable` on detached configurations even though this is not necessary
-        boolean disableUsageForDetached = isDetachedConfiguration() && !newValue;
-
-        // This property exists to allow KGP to test whether they have properly resolved this deprecation.
-        // This property WILL be removed without warning.
-        if ((redundantChange || disableUsageForDetached) &&
-            !Boolean.getBoolean("org.gradle.internal.deprecation.preliminary.Configuration.redundantUsageChangeWarning.enabled")
-        ) {
-            return;
+        if (redundantChange) {
+            return; // This isn't a change, so don't warn.
         }
 
+
+        if (!usageCanBeMutated) {
+            return; // Error will be thrown later. Don't emit a duplicate warning.
+        }
+
+        // We are making an actual change to the usage of a non-legacy configuration where usageCanBeMutated is true.
+        // An error won't be thrown because of usageCanBeMutated, but we want to at least warn the user.
         DeprecationLogger.deprecateAction(String.format("Calling %s(%b) on %s", methodName, newValue, this))
             .withContext("This configuration's role was set upon creation and its usage should not be changed.")
-            .willBecomeAnErrorInGradle9()
+            .willBecomeAnErrorInGradle10()
             .withUpgradeGuideSection(8, "configurations_allowed_usage")
             .nagUser();
     }
 
     private boolean isDetachedConfiguration() {
         return this.configurationsProvider instanceof DetachedConfigurationsProvider;
-    }
-
-    @SuppressWarnings("deprecation")
-    private boolean hasAllUsages() {
-        return roleAtCreation == ConfigurationRoles.ALL;
     }
 
     @Override
