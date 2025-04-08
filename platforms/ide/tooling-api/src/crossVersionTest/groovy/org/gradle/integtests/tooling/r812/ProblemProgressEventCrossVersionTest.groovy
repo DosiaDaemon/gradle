@@ -68,7 +68,7 @@ class ProblemProgressEventCrossVersionTest extends ToolingApiSpecification {
         setup:
         def nextMajor = Integer.parseInt(targetVersion.version.substring(0, targetVersion.version.indexOf("."))) + 1
         buildFile """
-            ${DeprecationLogger.class.name}.deprecate("foo").willBeRemovedInGradle${nextMajor}().undocumented().nagUser()
+            ${DeprecationLogger.class.name}.deprecate("deprecation").willBeRemovedInGradle${nextMajor}().undocumented().nagUser()
             task bar {}
             task baz {}
         """
@@ -89,7 +89,7 @@ class ProblemProgressEventCrossVersionTest extends ToolingApiSpecification {
         thrown(BuildException)
         listener.problems.size() == 2
         verifyAll(listener.problems[0]) {
-            definition.id.displayName.contains("foo")
+            definition.id.displayName.contains("deprecation")
             definition.id.group.displayName in ["Deprecation", "deprecation"]
             definition.id.group.name == "deprecation"
             definition.severity == Severity.WARNING
