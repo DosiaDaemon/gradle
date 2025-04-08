@@ -19,11 +19,10 @@ package org.gradle.integtests.resolve.api
 
 import org.gradle.api.internal.artifacts.configurations.ConfigurationRoles
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
-import org.gradle.integtests.fixtures.ConfigurationUsageChangingFixture
 import org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache
 import spock.lang.Issue
 
-class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec implements ConfigurationUsageChangingFixture {
+class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec {
     // region Roleless (Implicit LEGACY Role) Configurations
     @ToBeFixedForConfigurationCache(because = "task uses Configuration API")
     def "default usage for roleless configuration is to allow anything"() {
@@ -184,7 +183,7 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
         configuration << ['runtimeClasspath', 'compileClasspath']
     }
 
-    def "configurations created by buildSrc automatically can have usage changed"() {
+    def "configurations created by buildSrc automatically can not have usage changed (#change)"() {
         given:
         file("buildSrc/src/main/java/MyTask.java") << """
             import org.gradle.api.DefaultTask;
@@ -201,9 +200,7 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
                 assert findByName('implementation')
 
                 implementation {
-                    canBeConsumed = !canBeConsumed
-                    canBeResolved = !canBeResolved
-                    canBeDeclared = !canBeDeclared
+                    $change
                 }
             }
         """
@@ -212,14 +209,17 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             tasks.register('myTask', MyTask)
         """
 
-        expect:
-        expectConsumableChanging(':buildSrc:implementation', true)
-        expectResolvableChanging(':buildSrc:implementation', true)
-        expectDeclarableChanging(':buildSrc:implementation', false)
-        succeeds 'myTask'
+        when:
+        fails 'myTask'
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':buildSrc:implementation'.")
+
+        where:
+        change << ["canBeConsumed = !canBeConsumed", "canBeResolved = !canBeResolved", "canBeDeclared = !canBeDeclared"]
     }
 
-    def "configurations can have usage changed from other projects"() {
+    def "configurations can not have usage changed from other projects"() {
         given:
         file("projectA/build.gradle") << """
             plugins {
@@ -254,14 +254,11 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             }
         """
 
-        expect:
-        expectConsumableChanging(':projectA:implementation', true)
-        expectResolvableChanging(':projectA:implementation', true)
-        expectDeclarableChanging(':projectA:implementation', false)
-        expectConsumableChanging(':projectB:implementation', true)
-        expectResolvableChanging(':projectB:implementation', true)
-        expectDeclarableChanging(':projectB:implementation', false)
-        succeeds 'help'
+        when:
+        fails 'help'
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':projectA:implementation'.")
     }
     // endregion Roleless (Implicit LEGACY Role) Configurations
 
@@ -419,7 +416,7 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
     // endregion Role-Based Configurations
 
     // region Warnings
-    def "changing usage for configuration #configuration produces warnings"() {
+    def "changing usage for configuration #configuration fails"() {
         given: "a buildscript which attempts to change a configuration's usage"
         buildFile << """
             plugins {
@@ -433,15 +430,17 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             }
         """
 
-        expect: "the build succeeds and a deprecation warning is logged"
-        expectResolvableChanging(":$configuration", true)
-        succeeds 'help'
+        when: "the build fails due to the mutation"
+        fails 'help'
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':$configuration'.")
 
         where: "a non-exhaustive list of configurations is tested"
         configuration << ['api', 'implementation', 'compileOnly', 'runtimeOnly', 'archives']
     }
 
-    def "setting consumable = false is deprecated for consumable configurations added by java plugin"() {
+    def "setting consumable = false fails for consumable configurations added by java plugin"() {
         given: "a buildscript which attempts to change a configuration's usage"
         buildFile << """
             plugins {
@@ -456,15 +455,17 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             }
         """
 
-        expect: "the build succeeds and a deprecation warning is logged if the configuration is not allowed to change"
-        expectConsumableChanging(":$configuration", false)
-        succeeds 'help'
+        when: "the build fails due to the mutation"
+        fails 'help'
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':$configuration'.")
 
         where: "a non-exhaustive list of configurations is tested"
         configuration << ['default', 'archives', 'apiElements', 'runtimeElements']
     }
 
-    def "changing consumable to true always warns for non-LEGACY configurations (can not change #configuration usage)"() {
+    def "changing consumable to true always fails for non-LEGACY configurations (can not change #configuration usage)"() {
         given: "a buildscript which attempts to change a configuration's usage"
         buildFile << """
             plugins {
@@ -479,9 +480,11 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             }
         """
 
-        expect:
-        expectConsumableChanging(":$configuration", true)
-        succeeds 'help'
+        when:
+        fails 'help'
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':$configuration'.")
 
         where:
         configuration << ['api', 'implementation', 'runtimeOnly', 'compileOnly', 'compileOnlyApi', 'runtimeClasspath', 'compileClasspath']
@@ -627,7 +630,7 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
         "configurations.maybeCreateConsumableUnlocked('additionalRuntimeClasspath')"    | ConfigurationRoles.CONSUMABLE | true  | "internal unlocked role-based configuration, if it doesn't already exist"
     }
 
-    def "changing usage on detached configurations does not warn"() {
+    def "changing #usage on detached configurations fails"() {
         given:
         buildFile << """
             def detached = project.configurations.detachedConfiguration()
@@ -636,33 +639,42 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
             assert detached.canBeResolved
             assert detached.canBeDeclared
 
-            detached.canBeResolved = false
-            detached.canBeConsumed = false
-            detached.canBeDeclared = false
+            detached.$usage = false
         """
 
-        expect:
-        run "help"
+        when:
+        fails "help"
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':detachedConfiguration1'.")
+
+        where:
+        usage << ["canBeResolved", "canBeConsumed", "canBeDeclared"]
     }
 
-    def "changing usage on detached configurations warns when flag is set"() {
+    def "changing #usage redundantly on detached configurations fails"() {
         given:
         buildFile << """
             def detached = project.configurations.detachedConfiguration()
 
-            detached.canBeResolved = false
-            detached.canBeConsumed = false
-            detached.canBeDeclared = false
+            assert detached.canBeConsumed
+            assert detached.canBeResolved
+            assert detached.canBeDeclared
+
+            detached.$usage = true
         """
 
-        expect:
-        expectConsumableChanging(":detachedConfiguration1", false)
-        expectResolvableChanging(":detachedConfiguration1", false)
-        expectDeclarableChanging(":detachedConfiguration1", false)
-        succeeds('help', "-Dorg.gradle.internal.deprecation.preliminary.Configuration.redundantUsageChangeWarning.enabled=true")
+        when:
+        fails "help"
+
+        then:
+        failure.assertHasCause("Can not change the allowed usage of configuration ':detachedConfiguration1'.")
+
+        where:
+        usage << ["canBeResolved", "canBeConsumed", "canBeDeclared"]
     }
 
-    def "redundantly changing usage on a role-locked configuration warns when flag is set"() {
+    def "changing usage (#change) on a role-locked configuration fails"() {
         given:
         buildFile << """
             configurations {
@@ -671,30 +683,23 @@ class ConfigurationRoleUsageIntegrationTest extends AbstractIntegrationSpec impl
                 dependencyScope('dep')
             }
 
-            configurations.cons.canBeConsumed = true
-            configurations.cons.canBeResolved = false
-            configurations.cons.canBeDeclared = false
-
-            configurations.res.canBeConsumed = false
-            configurations.res.canBeResolved = true
-            configurations.res.canBeDeclared = false
-
-            configurations.dep.canBeConsumed = false
-            configurations.dep.canBeResolved = false
-            configurations.dep.canBeDeclared = true
+            $change
         """
 
         expect:
-        expectConsumableChanging(":cons", true)
-        expectResolvableChanging(":cons", false)
-        expectDeclarableChanging(":cons", false)
-        expectConsumableChanging(":res", false)
-        expectResolvableChanging(":res", true)
-        expectDeclarableChanging(":res", false)
-        expectConsumableChanging(":dep", false)
-        expectResolvableChanging(":dep", false)
-        expectDeclarableChanging(":dep", true)
-        succeeds('help', "-Dorg.gradle.internal.deprecation.preliminary.Configuration.redundantUsageChangeWarning.enabled=true")
+        fails('help')
+
+        where:
+        conf    | role                  | change
+        "cons"  | "Consumable"          | "configurations.cons.canBeResolved = true"
+        "cons"  | "Consumable"          | "configurations.cons.canBeDeclared = true"
+        "cons"  | "Consumable"          | "configurations.cons.canBeConsumed = false"
+        "res"   | "Resolvable"          | "configurations.res.canBeConsumed = true"
+        "res"   | "Resolvable"          | "configurations.res.canBeDeclared = true"
+        "res"   | "Resolvable"          | "configurations.res.canBeResolved = false"
+        "dep"   | "Dependency Scope"    | "configurations.dep.canBeConsumed = true"
+        "dep"   | "Dependency Scope"    | "configurations.dep.canBeResolved = true"
+        "dep"   | "Dependency Scope"    | "configurations.dep.canBeDeclared = false"
     }
 
     def "redundantly changing usage on a legacy configuration does not warn"() {
